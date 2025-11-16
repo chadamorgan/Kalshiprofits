@@ -31,12 +31,14 @@ def get_kalshi_markets():
         response.raise_for_status() 
         all_markets = response.json().get('markets', [])
         
-        # --- THIS IS YOUR NEW LOGIC ---
+        # --- THIS IS YOUR NEW, FIXED LOGIC ---
         # Find all markets trading under 40 cents
         cheap_markets = []
         for market in all_markets:
             kalshi_yes_price = market.get('yes_price', 100)
-            if " win " in market.get('title', '').lower() and 0 < kalshi_yes_price < 40:
+            # The bad " win " filter is now REMOVED.
+            # We just check the price.
+            if 0 < kalshi_yes_price < 40:
                 cheap_markets.append(market)
                 
         print(f"Found {len(cheap_markets)} Kalshi markets trading < 40 cents.")
