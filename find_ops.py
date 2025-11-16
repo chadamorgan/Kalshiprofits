@@ -4,23 +4,22 @@ import os
 
 # --- 1. GET YOUR API KEY (from GitHub Secrets) ---
 try:
-    # This is the secure way GitHub lets us use the API key
     ODDS_API_KEY = os.environ['ODDS_API_KEY']
 except KeyError:
-    # This error means the script is being run locally without the key.
-    # For our purposes, we'll just stop the script.
     print("CRITICAL ERROR: ODDS_API_KEY not found. Set it in GitHub Secrets.")
-    # We'll create a dummy key to prevent the script from crashing
-    # But it will fail the request, which is fine.
     ODDS_API_KEY = 'DUMMY_KEY_SCRIPT_WILL_FAIL'
 
-
 # --- 2. DEFINE YOUR PARAMETERS ---
-# Sport keys from The Odds API documentation
 SPORTS_TO_CHECK = ['americanfootball_nfl', 'basketball_nba', 'baseball_mlb', 'icehockey_nhl']
 KALSHI_API_URL = "https://api.elections.kalshi.com/trade-api/v2/markets"
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/{sport}/odds"
 
+# --- 3. HELPER FUNCTION TO CONVERT ODDS ---
+def get_moneyline(decimal_price):
+    if decimal_price >= 2.0:
+        return int((decimal_price - 1) * 100)
+    else:
+        return int(-100 / (decimal_price - 1))
 
 def get_kalshi_markets():
     """Fetches all open sports markets from Kalshi."""
@@ -29,19 +28,22 @@ def get_kalshi_markets():
     
     try:
         response = requests.get(KALSHI_API_URL, params=params)
-        response.raise_for_status() # Stop if there's an error
+        response.raise_for_status() 
         all_markets = response.json().get('markets', [])
         
-        team_markets = []
+        # --- THIS IS YOUR NEW LOGIC ---
+        # Find all markets trading under 40 cents
+        cheap_markets = []
         for market in all_markets:
-            # Find markets that are a YES/NO on a team winning
-            if " win " in market.get('title', '').lower() and market.get('yes_price', 0) > 0:
-                team_markets.append(market)
-        print(f"Found {len(team_markets)} relevant Kalshi markets.")
-        return team_markets
+            kalshi_yes_price = market.get('yes_price', 100)
+            if " win " in market.get('title', '').lower() and 0 < kalshi_yes_price < 40:
+                cheap_markets.append(market)
+                
+        print(f"Found {len(cheap_markets)} Kalshi markets trading < 40 cents.")
+        return cheap_markets
     except requests.exceptions.RequestException as e:
         print(f"Error fetching Kalshi data: {e}")
-        return [] # Return an empty list on failure
+        return []
 
 def get_sportsbook_odds():
     """Fetches all moneyline odds for the sports we care about."""
@@ -56,8 +58,8 @@ def get_sportsbook_odds():
         print(f"  ...fetching {sport}")
         params = {
             'apiKey': ODDS_API_KEY,
-            'regions': 'us',  # US-based bookmakers
-            'markets': 'h2h'    # h2h is 'head-to-head', i.e., moneyline
+            'regions': 'us',
+            'markets': 'h2h'
         }
         try:
             response = requests.get(ODDS_API_URL.format(sport=sport), params=params)
@@ -67,86 +69,80 @@ def get_sportsbook_odds():
             all_odds[sport] = response.json()
         except requests.exceptions.RequestException as e:
             print(f"Error fetching odds for {sport}: {e}")
-            # Don't stop the whole script, just skip this sport
             continue 
     return all_odds
 
-def find_opportunities(kalshi_markets, all_sports_odds):
-    """Compares Kalshi prices to sportsbook moneylines."""
-    opportunities = []
+def match_markets(kalshi_markets, all_sports_odds):
+    """Matches cheap Kalshi markets to sportsbook games and saves all odds."""
+    all_market_data = []
     
     for sport_key, games in all_sports_odds.items():
         for game in games:
             home_team = game.get('home_team')
             away_team = game.get('away_team')
             
-            bookmaker_odds = next(
-                (book['markets'][0]['outcomes'] for book in game.get('bookmakers', []) 
-                 if book.get('markets') and book['markets'][0].get('key') == 'h2h'),
-                None
-            )
-            
-            if not bookmaker_odds:
-                continue # No moneyline odds found for this game
-
-            odds_map = {item['name']: item['price'] for item in bookmaker_odds}
-            
             for kalshi_market in kalshi_markets:
                 title = kalshi_market.get('title').lower()
-                kalshi_yes_price = kalshi_market.get('yes_price', 100) / 100.0 # Convert cents to dollar
                 
-                team_in_title = None
-                moneyline_decimal = None
+                team_on_kalshi = None
                 
-                # This logic is simple. It matches "Dallas Cowboys" from the API 
-                # with a Kalshi title containing "cowboys". This may need refinement.
+                # Simple matching logic. This is the most fragile part.
+                # It checks if "cowboys" from Kalshi is in "Dallas Cowboys" from API
                 if home_team.lower() in title or any(part in title for part in home_team.lower().split()):
-                    team_in_title = home_team
-                    moneyline_decimal = odds_map.get(home_team)
+                    team_on_kalshi = home_team
                 elif away_team.lower() in title or any(part in title for part in away_team.lower().split()):
-                    team_in_title = away_team
-                    moneyline_decimal = odds_map.get(away_team)
+                    team_on_kalshi = away_team
                 else:
                     continue # This Kalshi market doesn't match this game
+
+                # --- NEW LOGIC: WE FOUND A MATCH! NOW GET ALL ODDS ---
                 
-                if not moneyline_decimal:
-                    continue # No odds found for the matched team
-
-                # Convert American odds (decimal) to moneyline format (e.g., +300)
-                if moneyline_decimal >= 2.0:
-                    moneyline = (moneyline_decimal - 1) * 100
-                else:
-                    moneyline = -100 / (moneyline_decimal - 1)
+                market_data = {
+                    "event": f"{away_team} @ {home_team}",
+                    "team_on_kalshi": team_on_kalshi,
+                    "kalshi_market": kalshi_market.get('title'),
+                    "kalshi_price": kalshi_market.get('yes_price') / 100.0, # Convert cents to dollar
+                    "kalshi_url": f"https://kalshi.com/markets/{kalshi_market.get('ticker')}",
+                    "bookmakers": []
+                }
                 
-                # --- THIS IS YOUR NEW, UPDATED LOGIC ---
-                # We are now looking for underdogs (moneyline > 100)
-                # that are LESS than +300 (moneyline < 300)
-                if kalshi_yes_price < 0.40 and moneyline < 300 and moneyline > 100:
-                    print(f"!!! OPPORTUNITY FOUND: {team_in_title} !!!")
-                    op = {
-                        "event": f"{away_team} @ {home_team}",
-                        "market": kalshi_market.get('title'),
-                        "kalshi_price": kalshi_yes_price,
-                        "moneyline": int(moneyline),
-                        "kalshi_url": f"https://kalshi.com/markets/{kalshi_market.get('ticker')}"
-                    }
-                    print(json.dumps(op, indent=2))
-                    opportunities.append(op)
+                for bookmaker in game.get('bookmakers', []):
+                    # Find the 'h2h' (moneyline) market
+                    h2h_market = next(
+                        (m for m in bookmaker.get('markets', []) if m.get('key') == 'h2h'), 
+                        None
+                    )
+                    if not h2h_market:
+                        continue # This bookmaker doesn't have moneyline odds
 
-    return opportunities
+                    # Find the odds for our specific team
+                    team_odds = next(
+                        (o for o in h2h_market.get('outcomes', []) if o.get('name') == team_on_kalshi),
+                        None
+                    )
+                    
+                    if team_odds:
+                        moneyline = get_moneyline(team_odds.get('price'))
+                        market_data['bookmakers'].append({
+                            "name": bookmaker.get('title'),
+                            "moneyline": moneyline
+                        })
+                
+                if market_data['bookmakers']: # Only add if we found at least one bookmaker
+                    all_market_data.append(market_data)
+                    print(f"Found match for {team_on_kalshi}, saving {len(market_data['bookmakers'])} odds.")
 
+    return all_market_data
 
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
-    print("--- Starting Opportunity Finder Script ---")
+    print("--- Starting Market Scanner Script ---")
     kalshi_markets = get_kalshi_markets()
     all_sports_odds = get_sportsbook_odds()
-    opportunities = find_opportunities(kalshi_markets, all_sports_odds)
+    final_data = match_markets(kalshi_markets, all_sports_odds)
     
-    # Write the final list to our "database" file
-    # This file will be read by the script.js on the website
     with open('opportunities.json', 'w') as f:
-        json.dump(opportunities, f, indent=2)
+        json.dump(final_data, f, indent=2)
         
-    print(f"\n--- Process complete. Found {len(opportunities)} opportunities. ---")
+    print(f"\n--- Process complete. Saved data for {len(final_data)} markets. ---")
     print("--- Wrote results to opportunities.json ---")
