@@ -24,20 +24,21 @@ def get_moneyline(decimal_price):
 def get_kalshi_markets():
     """Fetches all open sports markets from Kalshi."""
     print("Fetching Kalshi markets...")
-    params = {'status': 'open', 'category': 'sports'}
+    
+    # --- THIS IS THE FIX ---
+    # The 'category' filter was wrong. The correct filter is 'tags'.
+    params = {'status': 'open', 'tags': 'Sports'}
     
     try:
         response = requests.get(KALSHI_API_URL, params=params)
         response.raise_for_status() 
         all_markets = response.json().get('markets', [])
         
-        # --- THIS IS YOUR NEW, FIXED LOGIC ---
+        # --- YOUR LOGIC ---
         # Find all markets trading under 40 cents
         cheap_markets = []
         for market in all_markets:
             kalshi_yes_price = market.get('yes_price', 100)
-            # The bad " win " filter is now REMOVED.
-            # We just check the price.
             if 0 < kalshi_yes_price < 40:
                 cheap_markets.append(market)
                 
@@ -88,8 +89,7 @@ def match_markets(kalshi_markets, all_sports_odds):
                 
                 team_on_kalshi = None
                 
-                # Simple matching logic. This is the most fragile part.
-                # It checks if "cowboys" from Kalshi is in "Dallas Cowboys" from API
+                # Simple matching logic.
                 if home_team.lower() in title or any(part in title for part in home_team.lower().split()):
                     team_on_kalshi = home_team
                 elif away_team.lower() in title or any(part in title for part in away_team.lower().split()):
@@ -97,8 +97,7 @@ def match_markets(kalshi_markets, all_sports_odds):
                 else:
                     continue # This Kalshi market doesn't match this game
 
-                # --- NEW LOGIC: WE FOUND A MATCH! NOW GET ALL ODDS ---
-                
+                # --- WE FOUND A MATCH! NOW GET ALL ODDS ---
                 market_data = {
                     "event": f"{away_team} @ {home_team}",
                     "team_on_kalshi": team_on_kalshi,
@@ -109,15 +108,13 @@ def match_markets(kalshi_markets, all_sports_odds):
                 }
                 
                 for bookmaker in game.get('bookmakers', []):
-                    # Find the 'h2h' (moneyline) market
                     h2h_market = next(
                         (m for m in bookmaker.get('markets', []) if m.get('key') == 'h2h'), 
                         None
                     )
                     if not h2h_market:
-                        continue # This bookmaker doesn't have moneyline odds
+                        continue 
 
-                    # Find the odds for our specific team
                     team_odds = next(
                         (o for o in h2h_market.get('outcomes', []) if o.get('name') == team_on_kalshi),
                         None
@@ -130,7 +127,7 @@ def match_markets(kalshi_markets, all_sports_odds):
                             "moneyline": moneyline
                         })
                 
-                if market_data['bookmakers']: # Only add if we found at least one bookmaker
+                if market_data['bookmakers']: 
                     all_market_data.append(market_data)
                     print(f"Found match for {team_on_kalshi}, saving {len(market_data['bookmakers'])} odds.")
 
