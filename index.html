@@ -3,22 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sportsbook Opportunities</title>
+    <title>Sportsbook Market Scanner</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <h1>Sportsbook Arbitrage Finder</h1>
-    <p>Searching for Kalshi contracts < 40 cents and Moneylines > +300</p>
-    <p id="loading-message">Loading data...</p>
+    <h1>Kalshi Market Scanner</h1>
+    <p>Displaying all teams trading < 40 cents on Kalshi and their live sportsbook odds.</p>
 
+    <div id="filter-controls">
+        <h3>Filter by Odds</h3>
+        <input type="number" id="min-odds" placeholder="Min Odds (e.g., -110)">
+        <input type="number" id="max-odds" placeholder="Max Odds (e.g., 250)">
+        <button id="filter-button">Filter</button>
+        <button id="reset-button">Reset</button>
+    </div>
+
+    <p id="loading-message">Loading data...</p>
+    
     <table id="opportunities-table">
         <thead>
             <tr>
                 <th>Event</th>
-                <th>Kalshi Market</th>
+                <th>Team / Kalshi Market</th>
                 <th>Kalshi Price</th>
-                <th>Moneyline</th>
-                <th>Link</th>
+                <th>Sportsbook Odds</th>
             </tr>
         </thead>
         <tbody id="opportunities-table-body">
